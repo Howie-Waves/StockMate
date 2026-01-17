@@ -144,6 +144,85 @@ st.markdown("""
         transform: translateY(-2px);
         box-shadow: 0 4px 12px rgba(0,0,0,0.15);
     }
+
+    /* 隐藏滑块旁边的默认数字显示 */
+    div[data-testid="stSlider"] > div[data-testid="stMarkdownContainer"] > div {
+        display: none;
+    }
+
+    /* 止损滑块样式 - 绿色主题 */
+    /* 滑块轨道 */
+    div[data-testid="stSlider"] div[role="slider"][aria-label*="kelly_stop_loss_slider"]::-webkit-slider-runnable-track {
+        background: linear-gradient(to right, #4CAF50, #81C784) !important;
+        height: 6px !important;
+        border-radius: 3px !important;
+    }
+
+    /* 滑块拇指（拖动按钮） */
+    div[data-testid="stSlider"] div[role="slider"][aria-label*="kelly_stop_loss_slider"]::-webkit-slider-thumb {
+        -webkit-appearance: none !important;
+        appearance: none !important;
+        width: 18px !important;
+        height: 18px !important;
+        background: #4CAF50 !important;
+        border-radius: 50% !important;
+        cursor: pointer !important;
+        box-shadow: 0 2px 6px rgba(76, 175, 80, 0.4) !important;
+    }
+
+    /* Firefox 支持 */
+    div[data-testid="stSlider"] div[role="slider"][aria-label*="kelly_stop_loss_slider"]::-moz-range-track {
+        background: linear-gradient(to right, #4CAF50, #81C784) !important;
+        height: 6px !important;
+        border-radius: 3px !important;
+    }
+
+    div[data-testid="stSlider"] div[role="slider"][aria-label*="kelly_stop_loss_slider"]::-moz-range-thumb {
+        width: 18px !important;
+        height: 18px !important;
+        background: #4CAF50 !important;
+        border-radius: 50% !important;
+        cursor: pointer !important;
+        border: none !important;
+        box-shadow: 0 2px 6px rgba(76, 175, 80, 0.4) !important;
+    }
+
+    /* 止盈滑块样式 - 红色主题 */
+    /* 滑块轨道 */
+    div[data-testid="stSlider"] div[role="slider"][aria-label*="kelly_take_profit_slider"]::-webkit-slider-runnable-track {
+        background: linear-gradient(to right, #F44336, #E57373) !important;
+        height: 6px !important;
+        border-radius: 3px !important;
+    }
+
+    /* 滑块拇指（拖动按钮） */
+    div[data-testid="stSlider"] div[role="slider"][aria-label*="kelly_take_profit_slider"]::-webkit-slider-thumb {
+        -webkit-appearance: none !important;
+        appearance: none !important;
+        width: 18px !important;
+        height: 18px !important;
+        background: #F44336 !important;
+        border-radius: 50% !important;
+        cursor: pointer !important;
+        box-shadow: 0 2px 6px rgba(244, 67, 54, 0.4) !important;
+    }
+
+    /* Firefox 支持 */
+    div[data-testid="stSlider"] div[role="slider"][aria-label*="kelly_take_profit_slider"]::-moz-range-track {
+        background: linear-gradient(to right, #F44336, #E57373) !important;
+        height: 6px !important;
+        border-radius: 3px !important;
+    }
+
+    div[data-testid="stSlider"] div[role="slider"][aria-label*="kelly_take_profit_slider"]::-moz-range-thumb {
+        width: 18px !important;
+        height: 18px !important;
+        background: #F44336 !important;
+        border-radius: 50% !important;
+        cursor: pointer !important;
+        border: none !important;
+        box-shadow: 0 2px 6px rgba(244, 67, 54, 0.4) !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -340,6 +419,66 @@ def main():
             help="选择用于验证的技术指标策略",
         )
 
+        # 凯利公式仓位管理配置
+        st.subheader("💰 凯利公式仓位管理")
+
+        with st.expander("📊 仓位管理配置", expanded=True):
+            planned_capital = st.number_input(
+                "拟投入资金（元）",
+                min_value=1000,
+                max_value=10000000,
+                value=100000,
+                step=10000,
+                help="您计划用于此交易的总资金"
+            )
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown('<span style="color:#4CAF50;font-size:1rem;font-weight:bold;">🟢 止损比例</span>', unsafe_allow_html=True)
+                stop_loss_pct = st.slider(
+                    "",
+                    min_value=1.0,
+                    max_value=20.0,
+                    value=5.0,
+                    step=0.5,
+                    key="kelly_stop_loss_slider",
+                    help="当价格下跌到此比例时止损",
+                    label_visibility="collapsed"
+                )
+                # 显示绿色的当前值
+                st.markdown(
+                    f'<div style="text-align:center;color:#4CAF50;font-weight:bold;font-size:1.2rem;margin-top:-0.5rem;">{stop_loss_pct}%</div>',
+                    unsafe_allow_html=True
+                )
+            with col2:
+                st.markdown('<span style="color:#F44336;font-size:1rem;font-weight:bold;">🔴 止盈比例</span>', unsafe_allow_html=True)
+                take_profit_pct = st.slider(
+                    "",
+                    min_value=1.0,
+                    max_value=50.0,
+                    value=15.0,
+                    step=0.5,
+                    key="kelly_take_profit_slider",
+                    help="当价格上涨到此比例时止盈",
+                    label_visibility="collapsed"
+                )
+                # 显示红色的当前值
+                st.markdown(
+                    f'<div style="text-align:center;color:#F44336;font-weight:bold;font-size:1.2rem;margin-top:-0.5rem;">{take_profit_pct}%</div>',
+                    unsafe_allow_html=True
+                )
+
+            # 显示计算的盈亏比
+            actual_win_loss_ratio = take_profit_pct / stop_loss_pct if stop_loss_pct > 0 else 0
+            st.info(f"📈 当前盈亏比（赔率 b）: {actual_win_loss_ratio:.2f}")
+
+            st.markdown("""
+            <div style="font-size:0.85rem;color:#666;margin-top:0.5rem;">
+            💡 <b>凯利公式说明</b>：系统将根据回测胜率和此处的盈亏比计算最优仓位。
+            负期望值时系统将强制否决交易。
+            </div>
+            """, unsafe_allow_html=True)
+
         # 常用股票快捷按钮
         st.subheader("快捷操作")
         col1, col2 = st.columns(2)
@@ -388,8 +527,13 @@ def main():
                         report = parse_agent_response(str(response))
                         report.ticker = symbol
                     else:
-                        # 使用本地管道
-                        report = analyze_stock_pipeline(symbol)
+                        # 使用本地管道，传递凯利公式参数
+                        kelly_params = {
+                            "planned_capital": planned_capital,
+                            "stop_loss_pct": stop_loss_pct,
+                            "take_profit_pct": take_profit_pct,
+                        }
+                        report = analyze_stock_pipeline(symbol, kelly_params=kelly_params)
 
                     # 保存到 session state
                     st.session_state.report = report
@@ -457,6 +601,111 @@ def main():
                         label="历史收益",
                         value=f"{report.backtest_return:.1f}%",
                     )
+
+            # 凯利公式仓位建议
+            if report.kelly_result is not None:
+                st.subheader("💰 凯利公式仓位建议")
+
+                kelly = report.kelly_result
+
+                # 创建凯利公式结果卡片
+                if kelly.is_positive_ev:
+                    # 正期望值 - 显示建议
+                    st.markdown(f"""
+                    <div style="background:linear-gradient(135deg, #84fab0 0%, #8fd3f4 100%);
+                                border-radius:10px;padding:1.5rem;margin-bottom:1rem;">
+                        <h3 style="margin:0;color:#1a5f3a;">✅ 正期望值交易</h3>
+                        <p style="margin:0.5rem 0 0;color:#1a5f3a;">
+                            凯利公式建议可以开仓，但请注意风险控制
+                        </p>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    # 核心指标
+                    col1, col2, col3 = st.columns(3)
+
+                    with col1:
+                        st.metric(
+                            label="建议仓位比例",
+                            value=f"{kelly.kelly_fraction:.1%}",
+                            delta="凯利公式"
+                        )
+
+                    with col2:
+                        st.metric(
+                            label="建议投入金额",
+                            value=f"¥{kelly.recommended_amount:,.0f}",
+                            delta=f"占计划资金 {kelly.kelly_fraction:.1%}"
+                        )
+
+                    with col3:
+                        st.metric(
+                            label="半凯利（保守）",
+                            value=f"¥{kelly.half_kelly_amount:,.0f}",
+                            delta="推荐使用"
+                        )
+
+                    # 期望值和风险提示
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric(
+                            label="期望值 (EV)",
+                            value=f"{kelly.expected_value:.4f}",
+                            delta="正期望值 ✅"
+                        )
+
+                    with col2:
+                        st.info(f"📊 输入参数：胜率 {kelly.win_probability:.1f}% | 盈亏比 {kelly.win_loss_ratio:.2f}")
+
+                    # 风险提示
+                    st.warning(kelly.risk_warning)
+
+                    # 专业提示
+                    st.markdown("""
+                    <div style="background:#f0f7ff;border-left:4px solid #2196F3;padding:1rem;margin-top:1rem;">
+                        <h4 style="margin:0 0 0.5rem;color:#1976D2;">💡 专业提示</h4>
+                        <ul style="margin:0;padding-left:1.5rem;color:#333;">
+                            <li><b>半凯利公式</b>：许多专业投资者使用半凯利以降低回撤风险</li>
+                            <li><b>分散投资</b>：不要将所有资金投入单一标的</li>
+                            <li><b>动态调整</b>：根据市场变化及时调整仓位</li>
+                            <li><b>止损纪律</b>：严格执行预设的止损策略</li>
+                        </ul>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    # 负期望值 - 显示否决警告
+                    st.markdown(f"""
+                    <div style="background:linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+                                border-radius:10px;padding:2rem;text-align:center;">
+                        <h2 style="margin:0;color:#7a2c2c;">⚠️ 凯利公式否决交易</h2>
+                        <p style="margin:1rem 0 0;font-size:1.1rem;color:#7a2c2c;">
+                            {kelly.risk_warning}
+                        </p>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric(
+                            label="期望值 (EV)",
+                            value=f"{kelly.expected_value:.4f}",
+                            delta="负期望值 ❌"
+                        )
+                    with col2:
+                        st.metric(
+                            label="获胜概率",
+                            value=f"{kelly.win_probability:.1f}%",
+                        )
+
+                    st.error("""
+                    **不建议进行此交易**
+
+                    凯利公式显示此交易具有负期望值，长期坚持负期望值交易必然导致亏损。
+                    请等待更好的入场机会，或调整止盈止损比例以提高盈亏比。
+                    """)
+            elif report.final_decision == "Buy" and report.backtest_win_rate:
+                # 如果没有凯利结果但有买入建议，显示说明
+                st.info("💡 配置凯利公式参数后，系统将计算最优仓位建议")
 
             # 决策依据
             st.subheader("💡 决策依据")

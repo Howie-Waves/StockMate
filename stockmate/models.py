@@ -55,6 +55,11 @@ class StockAnalysisReport(BaseModel):
         None, description="历史策略总收益率 (%)"
     )
 
+    # 凯利公式仓位管理结果
+    kelly_result: Optional["KellyCriterionResult"] = Field(
+        None, description="凯利公式仓位建议"
+    )
+
     # 元数据
     analysis_timestamp: str = Field(
         default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -161,5 +166,43 @@ class BacktestResult(BaseModel):
                 "sharpe_ratio": 1.25,
                 "max_drawdown": -12.5,
                 "total_trades": 45,
+            }
+        }
+
+
+class KellyCriterionResult(BaseModel):
+    """凯利公式计算结果"""
+
+    # 输入参数
+    win_probability: float = Field(..., ge=0, le=100, description="获胜概率 (%)")
+    win_loss_ratio: float = Field(..., gt=0, description="盈亏比（赔率）")
+    planned_capital: float = Field(..., gt=0, description="拟投入资金（元）")
+    stop_loss_pct: float = Field(..., ge=0, le=100, description="止损比例 (%)")
+    take_profit_pct: float = Field(..., ge=0, le=100, description="止盈比例 (%)")
+
+    # 计算结果
+    kelly_fraction: float = Field(..., ge=0, description="凯利公式建议仓位比例")
+    recommended_amount: float = Field(..., ge=0, description="建议投入金额（元）")
+    expected_value: float = Field(..., description="期望值")
+    is_positive_ev: bool = Field(..., description="是否为正期望值")
+
+    # 风险提示
+    risk_warning: str = Field(..., description="风险提示信息")
+    half_kelly_amount: float = Field(..., ge=0, description="半凯利建议金额（保守策略）")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "win_probability": 68.5,
+                "win_loss_ratio": 2.5,
+                "planned_capital": 100000,
+                "stop_loss_pct": 5.0,
+                "take_profit_pct": 12.5,
+                "kelly_fraction": 0.31,
+                "recommended_amount": 31000,
+                "expected_value": 0.43,
+                "is_positive_ev": True,
+                "risk_warning": "建议使用半凯利公式降低风险",
+                "half_kelly_amount": 15500,
             }
         }

@@ -283,6 +283,9 @@ def run_backtest(
         df["date"] = pd.to_datetime(df["date"])
         df = df.set_index("date").sort_index()
 
+        # 确保 DataFrame 是正确的格式（避免未来数据泄露）
+        df = df.sort_index()
+
         # 根据策略类型生成信号
         if strategy_type == "RSI":
             entries, exits = _generate_rsi_signals(df)
@@ -297,13 +300,17 @@ def run_backtest(
             }
 
         # 运行回测
+        # 将价格数据转换为 Pandas Series 并确保是正确的格式
+        close_series = df["Close"].astype(float)
+
         pf = vbt.Portfolio.from_signals(
-            df["Close"],
+            close_series,
             entries,
             exits,
             init_cash=initial_cash,
             fees=0.001,  # 手续费 0.1%
             slippage=0.001,  # 滑点 0.1%
+            freq='d'  # 明确指定频率为日频（'d' 代表 daily）
         )
 
         # 计算回测指标
@@ -459,6 +466,64 @@ def backtest_strategy(symbol: str, strategy: str = "RSI") -> str:
     return f"回测失败: {result['error']}"
 
 
+def calculate_kelly_position(
+    win_probability: float,
+    planned_capital: float,
+    stop_loss_pct: float = 5.0,
+    take_profit_pct: float = 15.0,
+    win_loss_ratio: float = None,
+) -> str:
+    """
+    计算凯利公式仓位（供 Agent 调用）
+
+    Args:
+        win_probability: 获胜概率 (%)
+        planned_capital: 计划投入资金（元）
+        stop_loss_pct: 止损比例 (%)
+        take_profit_pct: 止盈比例 (%)
+        win_loss_ratio: 盈亏比（可选，如果不提供则根据止盈止损计算）
+
+    Returns:
+        格式化的凯利公式建议文本
+    """
+    from stockmate.tools.kelly_criterion import KellyCalculator
+
+    if win_loss_ratio is None:
+        win_loss_ratio = take_profit_pct / stop_loss_pct if stop_loss_pct > 0 else 2.0
+
+    result = KellyCalculator.calculate(
+        win_probability=win_probability,
+        win_loss_ratio=win_loss_ratio,
+        planned_capital=planned_capital,
+        stop_loss_pct=stop_loss_pct,
+        take_profit_pct=take_profit_pct,
+    )
+
+    return f"""
+🎯 凯利公式仓位建议：
+
+📊 输入参数：
+  - 获胜概率: {win_probability}%
+  - 盈亏比（赔率）: {win_loss_ratio:.2f}
+  - 计划投入: {planned_capital:,.2f} 元
+  - 止损比例: {stop_loss_pct}%
+  - 止盈比例: {take_profit_pct}%
+
+💰 计算结果：
+  - 凯利公式建议仓位: {result['kelly_fraction']:.2%}
+  - 建议投入金额: {result['recommended_amount']:,.2f} 元
+  - 半凯利（保守）: {result['half_kelly_amount']:,.2f} 元
+  - 期望值: {result['expected_value']:.4f}
+  - 正期望值: {'是 ✅' if result['is_positive_ev'] else '否 ❌'}
+
+⚠️ 风险提示:
+  {result['risk_warning']}
+
+💡 专业提示：
+  {'建议使用半凯利公式以降低回撤风险，提高资金曲线的平滑度。' if result['kelly_fraction'] > 0.1 else '当前建议仓位较为保守，可以考虑适当增加仓位。'}
+"""
+
+
 if __name__ == "__main__":
     # 测试工具
     print("=== 测试 get_a_share_data ===")
@@ -469,3 +534,6 @@ if __name__ == "__main__":
 
     print("\n=== 测试 run_backtest ===")
     print(run_backtest("600000", "RSI"))
+
+    print("\n=== 测试 calculate_kelly_position ===")
+    print(calculate_kelly_position(68, 100000, 5, 15))

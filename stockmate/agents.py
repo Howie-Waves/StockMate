@@ -364,9 +364,10 @@ class DecisionAgent:
         risk_approved: bool,
         volatility: float,
         backtest_result: dict = None,
+        kelly_input_params: dict = None,  # 新增：凯利公式输入参数
     ) -> StockAnalysisReport:
         """
-        综合决策
+        综合决策（集成凯利公式）
 
         Args:
             symbol: 股票代码
@@ -375,11 +376,12 @@ class DecisionAgent:
             risk_approved: 风控是否通过
             volatility: 波动率
             backtest_result: 回测结果
+            kelly_input_params: 凯利公式参数 {"planned_capital", "stop_loss_pct", "take_profit_pct"}
 
         Returns:
             最终的分析报告
         """
-        # 风控一票否决
+        # 1. 风控一票否决
         if not risk_approved:
             return StockAnalysisReport(
                 ticker=symbol,
@@ -393,10 +395,53 @@ class DecisionAgent:
                 backtest_return=backtest_result.get("total_return") if backtest_result else None,
             )
 
-        # 综合决策逻辑
+        # 2. 凯利公式计算（新增）
+        kelly_result = None
         decision = "Wait"
         reasoning_parts = []
 
+        if kelly_input_params and backtest_result and backtest_result.get("success"):
+            from stockmate.tools.kelly_criterion import KellyCalculator
+            from stockmate.models import KellyCriterionResult
+
+            # 使用回测胜率作为获胜概率
+            win_prob = backtest_result.get("win_rate", 50)
+
+            # 根据止盈止损计算盈亏比
+            win_loss_ratio = (
+                kelly_input_params["take_profit_pct"] / kelly_input_params["stop_loss_pct"]
+                if kelly_input_params["stop_loss_pct"] > 0
+                else 2.0
+            )
+
+            # 计算凯利公式
+            kelly_data = KellyCalculator.calculate(
+                win_probability=win_prob,
+                win_loss_ratio=win_loss_ratio,
+                planned_capital=kelly_input_params["planned_capital"],
+                stop_loss_pct=kelly_input_params["stop_loss_pct"],
+                take_profit_pct=kelly_input_params["take_profit_pct"],
+            )
+
+            # 3. 凯利公式负期望值否决（新增！）
+            if not kelly_data["is_positive_ev"]:
+                # 负期望值，强制否决交易
+                return StockAnalysisReport(
+                    ticker=symbol,
+                    sentiment_score=sentiment_score,
+                    technical_signal=technical_signal,
+                    risk_assessment="Rejected",  # 标记为被凯利公式否决
+                    var_value=volatility,
+                    final_decision="Wait",
+                    reasoning=f"⚠️ 凯利公式否决：负期望值交易。回测胜率 {win_prob:.1f}%，盈亏比 {win_loss_ratio:.2f}，期望值 {kelly_data['expected_value']:.4f}。不建议在负期望值下交易，请等待更好的入场机会。",
+                    backtest_win_rate=backtest_result.get("win_rate"),
+                    backtest_return=backtest_result.get("total_return"),
+                )
+
+            # 正期望值，保存凯利结果用于后续展示
+            kelly_result = KellyCriterionResult(**kelly_data)
+
+        # 4. 综合决策逻辑（继续现有逻辑）
         # 情绪分析
         if sentiment_score > 70:
             reasoning_parts.append(f"市场情绪积极 ({sentiment_score:.1f}/100)")
@@ -436,10 +481,11 @@ class DecisionAgent:
             reasoning="；".join(reasoning_parts),
             backtest_win_rate=backtest_result.get("win_rate") if backtest_result else None,
             backtest_return=backtest_result.get("total_return") if backtest_result else None,
+            kelly_result=kelly_result,  # 新增字段
         )
 
 
-def analyze_stock_pipeline(symbol: str) -> StockAnalysisReport:
+def analyze_stock_pipeline(symbol: str, kelly_params: dict = None) -> StockAnalysisReport:
     """
     使用 Agent 管道分析股票（不依赖 LLM）
 
@@ -447,6 +493,7 @@ def analyze_stock_pipeline(symbol: str) -> StockAnalysisReport:
 
     Args:
         symbol: 股票代码
+        kelly_params: 凯利公式参数 {"planned_capital", "stop_loss_pct", "take_profit_pct"}
 
     Returns:
         StockAnalysisReport 对象
@@ -468,7 +515,7 @@ def analyze_stock_pipeline(symbol: str) -> StockAnalysisReport:
     # 风控评估
     risk = RiskAgent.evaluate(perception["market_data"])
 
-    # 最终决策
+    # 最终决策（传递凯利公式参数）
     report = DecisionAgent.decide(
         symbol=symbol,
         sentiment_score=sentiment_score,
@@ -476,6 +523,7 @@ def analyze_stock_pipeline(symbol: str) -> StockAnalysisReport:
         risk_approved=risk["approved"],
         volatility=risk.get("volatility", 0),
         backtest_result=technical.get("backtest"),
+        kelly_input_params=kelly_params,
     )
 
     return report
