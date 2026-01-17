@@ -1,0 +1,41 @@
+# StockMate (股搭子) - 依赖包列表
+
+# Agent 框架
+smolagents>=0.1.0
+
+# 数据源
+akshare>=1.12.0
+
+# 数据处理
+pandas>=2.0.0
+numpy>=1.24.0
+
+# 回测框架
+vectorbt>=0.26.0
+
+# 数据验证
+pydantic>=2.0.0
+
+# 环境变量
+python-dotenv>=1.0.0
+
+# LLM 支持
+litellm>=1.40.0
+openai>=1.0.0
+
+# 技术指标计算
+ta>=0.11.0
+TA-Lib>=0.4.28
+
+# UI 界面
+streamlit>=1.31.0
+plotly>=5.18.0
+
+# HTTP 请求
+requests>=2.31.0
+
+# 日期处理
+python-dateutil>=2.8.0
+
+# 配置文件支持
+pyyaml>=6.0
