@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pip install:*)",
+      "Bash(pip install:*)",
+      "Bash(conda run:*)",
+      "Bash(D:toolsanaconda3Scriptsactivate.bat hackson)",
+      "Bash(python:*)",
+      "Bash(cd:*)",
+      "Bash(/d/tools/anaconda3/envs/hackson/python.exe:*)"
+    ]
+  }
+}

@@ -16,7 +16,16 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from stockmate.models import StockAnalysisReport
-from stockmate.tools.stock_tools import get_a_share_data, get_latest_news, run_backtest
+from stockmate.tools.stock_tools import (
+    get_a_share_data,
+    get_latest_news,
+    run_backtest,
+    get_stock_name_with_code,
+    generate_backtest_insights,
+    explain_term,
+    generate_human_insight,
+    preload_stock_cache,
+)
 from stockmate.agents import analyze_stock_pipeline, create_stockmate_agent, parse_agent_response
 from dotenv import load_dotenv
 
@@ -336,27 +345,80 @@ def create_price_chart(data_result: dict) -> go.Figure:
         return None
 
 
-def create_backtest_chart(symbol: str, strategy: str = "RSI") -> go.Figure:
-    """创建回测收益曲线图"""
-    # 这里可以扩展为更复杂的回测可视化
+def create_backtest_chart(backtest_result: dict) -> go.Figure:
+    """
+    创建回测收益曲线图
+
+    Args:
+        backtest_result: 回测结果字典，包含 equity_curve 和 dates
+
+    Returns:
+        plotly Figure 对象
+    """
     fig = go.Figure()
 
-    fig.add_trace(
-        go.Scatter(
-            x=list(range(10)),
-            y=[100 + i * 2 + (i % 3) for i in range(10)],
-            name=f"{strategy} 策略",
-            line=dict(color="#26a69a", width=2),
-        )
-    )
+    # 检查是否有收益曲线数据
+    if backtest_result.get("equity_curve") and backtest_result.get("dates"):
+        equity_curve = backtest_result["equity_curve"]
+        dates = backtest_result["dates"]
+        strategy = backtest_result.get("strategy", "策略")
 
-    fig.update_layout(
-        title=f"{strategy} 策略回测收益曲线",
-        xaxis_title="交易天数",
-        yaxis_title="累计收益 (%)",
-        height=300,
-        template="plotly_white",
-    )
+        # 添加收益曲线
+        fig.add_trace(
+            go.Scatter(
+                x=dates,
+                y=equity_curve,
+                name=f"{strategy} 策略收益",
+                line=dict(color="#26a69a", width=2),
+                fill="tozeroy",  # 填充到零轴
+                fillcolor="rgba(38, 166, 154, 0.1)",
+            )
+        )
+
+        # 添加零线（基准线）
+        fig.add_hline(
+            y=0,
+            line_dash="dash",
+            line_color="gray",
+            opacity=0.5,
+            annotation_text="盈亏平衡线"
+        )
+
+        fig.update_layout(
+            title=f"{strategy} 策略回测收益曲线",
+            xaxis_title="日期",
+            yaxis_title="累计收益率 (%)",
+            height=350,
+            template="plotly_white",
+            hovermode="x unified",
+            showlegend=True,
+        )
+
+        # 设置 x 轴格式
+        fig.update_xaxes(
+            tickangle=-45,
+            nticks=10  # 限制 x 轴刻度数量
+        )
+
+    else:
+        # 如果没有数据，显示空图表提示
+        fig.add_annotation(
+            text="暂无收益曲线数据<br>请先运行回测",
+            xref="paper",
+            yref="paper",
+            x=0.5,
+            y=0.5,
+            showarrow=False,
+            font=dict(size=14, color="gray")
+        )
+
+        fig.update_layout(
+            title="回测收益曲线",
+            xaxis_title="日期",
+            yaxis_title="累计收益率 (%)",
+            height=300,
+            template="plotly_white",
+        )
 
     return fig
 
@@ -364,6 +426,11 @@ def create_backtest_chart(symbol: str, strategy: str = "RSI") -> go.Figure:
 # ==================== 主界面 ====================
 
 def main():
+    # 预加载股票缓存（后台运行，避免第一次分析时的延迟）
+    if 'cache_preloaded' not in st.session_state:
+        preload_stock_cache()
+        st.session_state.cache_preloaded = True
+
     # 页面标题
     st.markdown("""
     <div class="main-header">
@@ -409,7 +476,17 @@ def main():
             "股票代码",
             placeholder="例如: 600000 或 000001",
             help="请输入6位股票代码",
+            key="stock_code_input"  # 添加 key 以支持变化检测
         )
+
+        # 检测股票代码变化，清空之前的分析结果
+        if 'last_symbol' in st.session_state and st.session_state.last_symbol != symbol:
+            # 股票代码已变化，清空之前的分析结果
+            if 'report' in st.session_state:
+                del st.session_state.report
+
+        # 记录当前股票代码
+        st.session_state.last_symbol = symbol
 
         # 回测策略选择
         st.subheader("回测配置")
@@ -503,7 +580,142 @@ def main():
 
     # ==================== 标签页 1: 综合分析 ====================
     with tab1:
-        st.header(f"📊 {symbol} 综合分析报告")
+        # 获取股票名称并显示友好的标题
+        stock_display_name = get_stock_name_with_code(symbol)
+        st.header(f"📊 {stock_display_name} 投资分析报告")
+
+        # 决策信号说明卡片
+        st.markdown("""
+        <style>
+        .signal-guide-container {
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 25px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+        }
+        .signal-guide-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #2c3e50;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .signal-cards {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+            margin-bottom: 15px;
+        }
+        .signal-card {
+            background: white;
+            border-radius: 10px;
+            padding: 12px;
+            text-align: center;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .signal-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+        }
+        .signal-icon {
+            font-size: 1.8rem;
+            margin-bottom: 5px;
+        }
+        .signal-name {
+            font-weight: 700;
+            font-size: 0.95rem;
+            margin-bottom: 3px;
+        }
+        .signal-desc {
+            font-size: 0.75rem;
+            color: #666;
+        }
+        .risk-alert {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            border-radius: 8px;
+            padding: 12px 15px;
+            margin-top: 12px;
+            font-size: 0.85rem;
+        }
+        .risk-alert-title {
+            font-weight: 600;
+            color: #856404;
+            margin-bottom: 5px;
+        }
+        .risk-alert-text {
+            color: #856404;
+            line-height: 1.5;
+        }
+        .approval-status {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            margin-top: 10px;
+            padding-top: 15px;
+            border-top: 1px solid rgba(0,0,0,0.1);
+        }
+        .approval-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.85rem;
+        }
+        @media (max-width: 768px) {
+            .signal-cards {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+        </style>
+
+        <div class="signal-guide-container">
+            <div class="signal-guide-title">
+                📖 决策信号快速参考
+            </div>
+            <div class="signal-cards">
+                <div class="signal-card">
+                    <div class="signal-icon">🟢</div>
+                    <div class="signal-name" style="color: #4CAF50;">Buy</div>
+                    <div class="signal-desc">买入信号<br>可考虑买入</div>
+                </div>
+                <div class="signal-card">
+                    <div class="signal-icon">🔴</div>
+                    <div class="signal-name" style="color: #F44336;">Sell</div>
+                    <div class="signal-desc">卖出信号<br>可考虑卖出</div>
+                </div>
+                <div class="signal-card">
+                    <div class="signal-icon">🟡</div>
+                    <div class="signal-name" style="color: #FF9800;">Wait</div>
+                    <div class="signal-desc">观望信号<br>暂时不操作</div>
+                </div>
+                <div class="signal-card">
+                    <div class="signal-icon">⚪</div>
+                    <div class="signal-name" style="color: #9E9E9E;">Hold</div>
+                    <div class="signal-desc">持有信号<br>保持仓位不动</div>
+                </div>
+            </div>
+            <div class="approval-status">
+                <div class="approval-item">
+                    <span style="font-size: 1.2rem;">✅</span>
+                    <span><strong>通过</strong> - 风控评估通过，可交易</span>
+                </div>
+                <div class="approval-item">
+                    <span style="font-size: 1.2rem;">❌</span>
+                    <span><strong>否决</strong> - 风险过高，强制否决交易</span>
+                </div>
+            </div>
+            <div class="risk-alert">
+                <div class="risk-alert-title">⚠️ 风控一票否决权</div>
+                <div class="risk-alert-text">
+                    风控官拥有最高否决权。当波动率过高或凯利公式计算为负期望值时，即使其他信号强烈，最终决策也将被强制为 <strong>Wait</strong>。
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
         # 分析按钮
         if st.button("🚀 开始分析", type="primary", use_container_width=True):
@@ -602,10 +814,10 @@ def main():
                         value=f"{report.backtest_return:.1f}%",
                     )
 
-            # 凯利公式仓位建议
-            if report.kelly_result is not None:
-                st.subheader("💰 凯利公式仓位建议")
+            # 凯利公式仓位建议 - 始终显示
+            st.subheader("💰 凯利公式仓位建议")
 
+            if report.kelly_result is not None:
                 kelly = report.kelly_result
 
                 # 创建凯利公式结果卡片
@@ -703,17 +915,463 @@ def main():
                     凯利公式显示此交易具有负期望值，长期坚持负期望值交易必然导致亏损。
                     请等待更好的入场机会，或调整止盈止损比例以提高盈亏比。
                     """)
-            elif report.final_decision == "Buy" and report.backtest_win_rate:
-                # 如果没有凯利结果但有买入建议，显示说明
-                st.info("💡 配置凯利公式参数后，系统将计算最优仓位建议")
+            else:
+                # 凯利结果为空时显示说明
+                if report.backtest_win_rate is not None:
+                    # 有回测数据但计算失败
+                    st.markdown(f"""
+                    <div style="background:linear-gradient(135deg, #f6d365 0%, #fda085 100%);
+                                border-radius:10px;padding:2rem;text-align:center;">
+                        <h2 style="margin:0;color:#7a2c2c;">⚠️ 无法计算凯利仓位建议</h2>
+                        <p style="margin:1rem 0 0;font-size:1.1rem;color:#7a2c2c;">
+                            当前风险收益比不足以为凯利公式提供可靠建议。<br>
+                            <b>建议仓位：0%（不建议开仓）</b>
+                        </p>
+                        <p style="margin:0.5rem 0 0;color:#7a2c2c;font-size:0.9rem;">
+                            原因：历史胜率 ({report.backtest_win_rate:.1f}%) 可能不足以支撑正期望值交易。
+                        </p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    # 无回测数据
+                    st.info("""
+                    **💡 凯利公式仓位计算**
 
-            # 决策依据
-            st.subheader("💡 决策依据")
-            st.info(report.reasoning)
+                    要获取凯利公式的最优仓位建议，请确保：
+                    1. 系统已成功获取历史回测数据
+                    2. 在左侧配置了凯利公式参数（拟投入资金、止损比例、止盈比例）
+
+                    <small>凯利公式根据历史胜率和您设置的盈亏比，计算 mathematically 最优的投资仓位比例。</small>
+                    """)
+
+            # 人类洞察引擎 - 生成投资建议
+            st.subheader("🧠 投资洞察分析")
+
+            # 获取股票数据用于洞察分析
+            data_result = get_a_share_data(symbol)
+
+            if data_result["success"]:
+                # 计算技术指标
+                from stockmate.tools.stock_tools import calculate_technical_indicators
+                import akshare as ak
+                from datetime import timedelta
+
+                # 获取历史数据用于计算指标
+                end_date = datetime.now().strftime("%Y%m%d")
+                start_date = (datetime.now() - timedelta(days=90)).strftime("%Y%m%d")
+
+                df = None
+                try:
+                    df_temp = ak.stock_zh_a_hist(
+                        symbol=symbol,
+                        period="daily",
+                        start_date=start_date,
+                        end_date=end_date,
+                        adjust="qfq",
+                    )
+                    column_mapping = {
+                        "日期": "date",
+                        "开盘": "Open",
+                        "最高": "High",
+                        "最低": "Low",
+                        "收盘": "Close",
+                        "成交量": "Volume",
+                    }
+                    df = df_temp.rename(columns=column_mapping)
+                except Exception as e:
+                    st.warning(f"获取历史数据失败: {e}")
+
+                # 计算技术指标
+                indicators = calculate_technical_indicators(
+                    df=df,
+                    current_price=data_result.get("current_price", 0)
+                )
+
+                # 添加凯利公式指标
+                if report.kelly_result:
+                    indicators["kelly_fraction"] = report.kelly_result.kelly_fraction
+                    indicators["kelly_positive_ev"] = report.kelly_result.is_positive_ev
+                else:
+                    indicators["kelly_fraction"] = 0
+                    indicators["kelly_positive_ev"] = False
+
+                # 生成人类洞察
+                human_insight = generate_human_insight(
+                    stock_data=data_result,
+                    sentiment_score=report.sentiment_score,
+                    technical_signal=report.technical_signal,
+                    var_value=report.var_value,
+                    risk_assessment=report.risk_assessment,
+                    indicators=indicators
+                )
+
+                # Observation 层级 - 市场观察
+                st.markdown("### 📊 市场观察 (OBSERVATION)")
+
+                col1, col2, col3 = st.columns(3)
+
+                with col1:
+                    st.markdown(f"""
+                    <div style="background:#f0f4ff;border-left:4px solid #2196F3;padding:1rem;border-radius:8px;">
+                        <div style="font-size:0.75rem;color:#666;margin-bottom:0.5rem;">价格走势</div>
+                        <div style="font-size:0.9rem;color:#333;line-height:1.4;">
+                            {human_insight['observation_trend']}
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                with col2:
+                    st.markdown(f"""
+                    <div style="background:#fff3e0;border-left:4px solid #FF9800;padding:1rem;border-radius:8px;">
+                        <div style="font-size:0.75rem;color:#666;margin-bottom:0.5rem;">波动性</div>
+                        <div style="font-size:0.9rem;color:#333;line-height:1.4;">
+                            {human_insight['observation_volatility']}
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                with col3:
+                    st.markdown(f"""
+                    <div style="background:#e8f5e9;border-left:4px solid #4CAF50;padding:1rem;border-radius:8px;">
+                        <div style="font-size:0.75rem;color:#666;margin-bottom:0.5rem;">市场情绪</div>
+                        <div style="font-size:0.9rem;color:#333;line-height:1.4;">
+                            {human_insight['observation_sentiment']}
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                st.markdown("---")
+
+                # Interpretation 层级 - 深度解读
+                st.markdown("### 🔍 深度解读 (INTERPRETATION)")
+
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    st.markdown(f"""
+                    <div style="background:#fff9c4;border-left:4px solid #FBC02D;padding:1.2rem;border-radius:8px;margin-bottom:1rem;">
+                        <div style="font-weight:600;color:#F57F17;margin-bottom:0.5rem;">💰 投资机会</div>
+                        <div style="font-size:0.95rem;color:#333;line-height:1.6;">
+                            {human_insight['interpretation_opportunity']}
+                        </div>
+                    </div>
+
+                    <div style="background:#ffebee;border-left:4px solid #EF5350;padding:1.2rem;border-radius:8px;">
+                        <div style="font-weight:600;color:#C62828;margin-bottom:0.5rem;">⚠️ 风险评估</div>
+                        <div style="font-size:0.95rem;color:#333;line-height:1.6;">
+                            {human_insight['interpretation_risk']}
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                with col2:
+                    st.markdown(f"""
+                    <div style="background:#e1f5fe;border-left:4px solid #039BE5;padding:1.2rem;border-radius:8px;">
+                        <div style="font-weight:600;color:#0277BD;margin-bottom:0.5rem;">📈 技术信号</div>
+                        <div style="font-size:0.95rem;color:#333;line-height:1.6;">
+                            {human_insight['interpretation_technical']}
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                st.markdown("---")
+
+                # Verdict 层级 - 最终建议
+                st.markdown("### 📊 综合分析结论")
+
+                # 解析并美化综合决策结论文本
+                verdict_raw = human_insight['verdict_summary']
+
+                # 基于中文关键词判断信号类型和颜色
+                # 积极信号：看多、建仓、反弹、积极
+                # 谨慎信号：谨慎、超买、轻仓
+                # 消极/观望信号：防御、观望、否决、避免、等待
+                positive_keywords = ["积极看多", "建仓布局", "潜在反弹", "强烈看多"]
+                cautious_keywords = ["谨慎", "超买", "轻仓布局"]
+                negative_keywords = ["防御姿态", "观望等待", "风控否决", "负期望值", "避免交易", "信号混合"]
+
+                verdict_raw_lower = verdict_raw.lower()
+                if any(kw in verdict_raw for kw in positive_keywords):
+                    # 积极/看多 - 使用绿色系但更柔和
+                    verdict_color = "#2E7D32"  # 深绿色
+                    verdict_emoji = "📈"
+                elif any(kw in verdict_raw for kw in cautious_keywords):
+                    # 谨慎 - 使用橙色系
+                    verdict_color = "#F57C00"  # 深橙色
+                    verdict_emoji = "⚖️"
+                else:
+                    # 观望/中性 - 使用蓝色系（更中性、专业）
+                    verdict_color = "#1976D2"  # 深蓝色
+                    verdict_emoji = "📊"
+
+                # 提取结论标题（冒号后的部分）
+                verdict_signal = "综合分析"
+                verdict_desc = verdict_raw
+
+                # 解析新格式的结论文本 "综合决策结论: XXX - XXX"
+                if "综合决策结论:" in verdict_raw:
+                    parts = verdict_raw.split("综合决策结论:", 1)[1].split("\n\n", 1)
+                    if len(parts) >= 1:
+                        signal_part = parts[0].strip()
+                        verdict_signal = signal_part
+                    if len(parts) >= 2:
+                        verdict_desc = parts[1].strip()
+
+                # 处理描述文本中的换行
+                import html as html_lib
+                verdict_desc_html = verdict_desc.replace('\n\n', '<br><br>').replace('\n', '<br>')
+
+                # 处理具体操作步骤 - 不使用 html.escape，直接渲染文本
+                actionable_raw = human_insight['verdict_actionable']
+                # 移除开头的 "[ 操作建议 ]\n\n"
+                if actionable_raw.startswith("[ 操作建议 ]\n\n"):
+                    actionable_raw = actionable_raw.replace("[ 操作建议 ]\n\n", "", 1)
+
+                # 分割每个步骤并格式化
+                steps_list = actionable_raw.strip().split('\n')
+                actionable_items = []
+                for step in steps_list:
+                    step = step.strip()
+                    if step:
+                        # 移除开头的 •
+                        if step.startswith('•'):
+                            step = step[1:].strip()
+                        actionable_items.append(step)
+
+                # 生成HTML，使用format避免转义问题
+                actionable_html = ""
+                for step in actionable_items:
+                    actionable_html += (
+                        f'<div style="display:flex;align-items:start;margin-top:0.8rem;">'
+                        f'<span style="color:{verdict_color};font-size:1.2rem;margin-right:0.6rem;margin-top:0.1rem;">•</span>'
+                        f'<span style="flex:1;color:#333;line-height:1.7;">{step}</span>'
+                        f'</div>'
+                    )
+
+                # 综合决策结论部分 - 优化为更专业、中性的设计
+                verdict_html = f"""
+                <div style="background:linear-gradient(135deg, #f5f7fa 0%, #e8eef5 100%);
+                          border-left:4px solid {verdict_color};
+                          padding:1.8rem;border-radius:12px;margin-bottom:1.5rem;
+                          box-shadow:0 2px 12px rgba(0,0,0,0.06);">
+                    <div style="display:flex;align-items:center;margin-bottom:1rem;">
+                        <span style="font-size:2rem;margin-right:0.7rem;">{verdict_emoji}</span>
+                        <div>
+                            <div style="font-weight:700;color:#1a1a1a;font-size:1.25rem;letter-spacing:0.3px;">
+                                综合分析结论
+                            </div>
+                            <div style="font-size:0.8rem;color:#666;margin-top:0.15rem;">
+                                多因子加权评分模型
+                            </div>
+                        </div>
+                    </div>
+                    <div style="background:white;padding:1.3rem;border-radius:10px;
+                               border:1px solid #e0e0e0;
+                               box-shadow:0 1px 4px rgba(0,0,0,0.03);">
+                        <div style="display:inline-block;background:{verdict_color};color:white;
+                                   font-weight:600;padding:0.35rem 0.9rem;border-radius:6px;
+                                   font-size:0.85rem;margin-bottom:0.9rem;letter-spacing:0.5px;">
+                            {verdict_signal}
+                        </div>
+                        <div style="font-size:1rem;color:#2c3e50;line-height:1.8;font-weight:400;">
+                            {verdict_desc_html}
+                        </div>
+                    </div>
+                </div>
+                """
+
+                # 具体操作步骤部分 - 更简洁的设计
+                actionable_section_html = f"""
+                <div style="background:#ffffff;border-radius:12px;padding:1.5rem;
+                          box-shadow:0 2px 8px rgba(0,0,0,0.04);
+                          border:1px solid #e8e8e8;">
+                    <div style="display:flex;align-items:center;margin-bottom:1rem;
+                               padding-bottom:0.7rem;border-bottom:1px solid #eee;">
+                        <span style="font-size:1.5rem;margin-right:0.5rem;">📝</span>
+                        <div>
+                            <div style="font-weight:600;color:#333;font-size:1.1rem;">
+                                操作建议
+                            </div>
+                        </div>
+                    </div>
+                    <div style="font-size:0.95rem;color:#444;line-height:1.7;">
+                        {actionable_html}
+                    </div>
+                </div>
+                """
+
+                st.markdown(verdict_html + actionable_section_html, unsafe_allow_html=True)
+
+            # AI 深度分析部分
+            st.markdown("---")
+            st.subheader("🤖 AI 深度分析")
+
+            # 获取数据用于 AI 分析
+            if data_result["success"]:
+                with st.spinner("正在生成 AI 深度分析..."):
+                    try:
+                        from stockmate.tools.llm_service import (
+                            generate_comprehensive_analysis,
+                            generate_risk_warning,
+                            generate_key_points_analysis,
+                            generate_market_outlook,
+                            generate_trading_strategy
+                        )
+
+                        # 准备数据
+                        company_name = get_stock_name_with_code(symbol)
+                        current_price = data_result.get("current_price", 0)
+                        change_pct = data_result.get("change_pct", 0)
+                        sentiment_score = report.sentiment_score
+                        technical_signal = report.technical_signal
+                        volatility = report.var_value
+
+                        # 计算技术指标
+                        import akshare as ak
+                        from datetime import timedelta
+                        end_date = datetime.now().strftime("%Y%m%d")
+                        start_date = (datetime.now() - timedelta(days=90)).strftime("%Y%m%d")
+
+                        rsi_value = None
+                        ma_trend = None
+                        try:
+                            df_temp = ak.stock_zh_a_hist(
+                                symbol=symbol,
+                                period="daily",
+                                start_date=start_date,
+                                end_date=end_date,
+                                adjust="qfq",
+                            )
+                            column_mapping = {
+                                "日期": "date",
+                                "开盘": "Open",
+                                "最高": "High",
+                                "最低": "Low",
+                                "收盘": "Close",
+                                "成交量": "Volume",
+                            }
+                            df_temp = df_temp.rename(columns=column_mapping)
+
+                            # 计算 RSI
+                            delta = df_temp["Close"].diff()
+                            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+                            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+                            rs = gain / loss
+                            rsi = 100 - (100 / (1 + rs))
+                            rsi_value = float(rsi.iloc[-1]) if len(rsi) > 0 else None
+
+                            # 计算 MA 趋势
+                            df_temp["MA5"] = df_temp["Close"].rolling(window=5).mean()
+                            df_temp["MA20"] = df_temp["Close"].rolling(window=20).mean()
+                            ma5 = df_temp["MA5"].iloc[-1]
+                            ma20 = df_temp["MA20"].iloc[-1]
+                            if ma5 > ma20:
+                                ma_trend = "多头排列（MA5 > MA20）"
+                            elif ma5 < ma20:
+                                ma_trend = "空头排列（MA5 < MA20）"
+                            else:
+                                ma_trend = "中性"
+                        except:
+                            pass
+
+                        # 1. 全面分析
+                        with st.expander("📊 全面分析报告", expanded=True):
+                            comprehensive = generate_comprehensive_analysis(
+                                symbol=symbol,
+                                company_name=company_name,
+                                current_price=current_price,
+                                change_pct=change_pct,
+                                sentiment_score=sentiment_score,
+                                technical_signal=technical_signal,
+                                win_rate=report.backtest_win_rate,
+                                total_return=report.backtest_return
+                            )
+                            if "暂无智能分析" not in comprehensive and "分析生成失败" not in comprehensive:
+                                st.markdown(f"""
+                                <div style="background:linear-gradient(135deg, #e3f2fd 0%, #f3e5f5 100%);
+                                          padding:1.5rem;border-radius:12px;border-left:4px solid #2196F3;">
+                                    <div style="color:#1565C0;font-weight:600;margin-bottom:0.5rem;">🎯 综合评估</div>
+                                    <div style="color:#333;line-height:1.8;">{comprehensive}</div>
+                                </div>
+                                """, unsafe_allow_html=True)
+
+                        # 2. 关键分析要点
+                        with st.expander("🔑 关键分析要点"):
+                            keypoints = generate_key_points_analysis(
+                                symbol=symbol,
+                                current_price=current_price,
+                                rsi=rsi_value,
+                                ma_trend=ma_trend
+                            )
+                            if "暂无智能分析" not in keypoints and "分析生成失败" not in keypoints:
+                                st.markdown(f"""
+                                <div style="background:#f8f9fa;padding:1.2rem;border-radius:10px;">
+                                    <div style="color:#495057;line-height:2;white-space:pre-wrap;">{keypoints}</div>
+                                </div>
+                                """, unsafe_allow_html=True)
+
+                        # 3. 风险提示
+                        with st.expander("⚠️ 风险评估与控制"):
+                            position_size = report.kelly_result.kelly_fraction if report.kelly_result else 0
+                            max_dd = volatility * 1.5  # 估算最大回撤
+                            risk_warning = generate_risk_warning(
+                                symbol=symbol,
+                                volatility=volatility,
+                                max_drawdown=max_dd,
+                                position_size=position_size
+                            )
+                            if "暂无智能分析" not in risk_warning and "分析生成失败" not in risk_warning:
+                                st.markdown(f"""
+                                <div style="background:#fff3cd;padding:1.2rem;border-radius:10px;border-left:4px solid #ffc107;">
+                                    <div style="color:#856404;line-height:1.8;">{risk_warning}</div>
+                                </div>
+                                """, unsafe_allow_html=True)
+
+                        # 4. 市场展望
+                        with st.expander("🔮 市场展望（1-3个月）"):
+                            market_trend = "上涨" if change_pct > 0 else "下跌" if change_pct < 0 else "震荡"
+                            outlook = generate_market_outlook(
+                                symbol=symbol,
+                                sentiment_score=sentiment_score,
+                                technical_signal=technical_signal,
+                                market_trend=market_trend
+                            )
+                            if "暂无智能分析" not in outlook and "分析生成失败" not in outlook:
+                                st.markdown(f"""
+                                <div style="background:#e1f5fe;padding:1.2rem;border-radius:10px;border-left:4px solid #03a9f4;">
+                                    <div style="color:#01579b;line-height:1.8;">{outlook}</div>
+                                </div>
+                                """, unsafe_allow_html=True)
+
+                        # 5. 交易策略建议
+                        if planned_capital and stop_loss_pct and take_profit_pct:
+                            with st.expander("💡 交易策略建议"):
+                                stop_loss_price = current_price * (1 - stop_loss_pct / 100)
+                                take_profit_price = current_price * (1 + take_profit_pct / 100)
+                                strategy = generate_trading_strategy(
+                                    symbol=symbol,
+                                    current_price=current_price,
+                                    stop_loss=stop_loss_price,
+                                    take_profit=take_profit_price,
+                                    risk_tolerance="medium"
+                                )
+                                if "暂无智能分析" not in strategy and "分析生成失败" not in strategy:
+                                    st.markdown(f"""
+                                    <div style="background:#f1f8e9;padding:1.2rem;border-radius:10px;border-left:4px solid #689f38;">
+                                        <div style="color:#33691e;line-height:1.8;">{strategy}</div>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+
+                    except Exception as e:
+                        st.warning(f"AI 分析生成失败: {str(e)}")
+
+            # 原始决策依据（折叠）
+            with st.expander("🔧 查看原始决策依据（技术性）"):
+                st.info(report.reasoning)
 
             # 获取价格数据并绘图
+            st.subheader("📈 价格走势图")
             with st.spinner("加载图表数据..."):
-                data_result = get_a_share_data(symbol)
                 if data_result["success"]:
                     fig = create_price_chart(data_result)
                     if fig:
@@ -721,7 +1379,7 @@ def main():
 
     # ==================== 标签页 2: 市场新闻 ====================
     with tab2:
-        st.header(f"📰 {symbol} 最新资讯")
+        st.header(f"📰 {stock_display_name} 最新资讯")
 
         if st.button("🔄 刷新新闻", use_container_width=True):
             with st.spinner("获取最新新闻..."):
@@ -734,18 +1392,45 @@ def main():
             if news_result["success"]:
                 st.success(f"✅ 获取到 {news_result['news_count']} 条最新资讯")
 
-                for news in news_result["news"]:
-                    st.markdown(f"""
-                    <div class="news-card">
-                        <div class="news-title">{news['title']}</div>
-                        <div class="news-meta">
-                            📅 {news['publish_time']} | 📰 {news['source']}
+                for i, news in enumerate(news_result["news"], 1):
+                    # 如果有URL，显示为可点击链接
+                    if news.get('url'):
+                        st.markdown(f"""
+                        <div class="news-card">
+                            <div style="display:flex;align-items:center;gap:10px;margin-bottom:0.5rem;">
+                                <span style="background:#2196F3;color:white;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:0.9rem;">{i}</span>
+                                <div class="news-title">
+                                    <a href="{news['url']}" target="_blank" style="color:#1976D2;text-decoration:none;font-weight:600;">
+                                        {news['title']} 🔗
+                                    </a>
+                                </div>
+                            </div>
+                            <div class="news-meta" style="margin-left:38px;">
+                                📅 {news['publish_time']} | 📰 {news['source']}
+                            </div>
+                            <div style="margin-left:38px;margin-top:0.5rem;color:#555;font-size:0.9rem;line-height:1.5;">
+                                {news['content'][:150]}...
+                            </div>
                         </div>
-                        <div style="margin-top:0.5rem;color:#333;">
-                            {news['content'][:150]}...
+                        """, unsafe_allow_html=True)
+                    else:
+                        # 没有URL，显示普通文本
+                        st.markdown(f"""
+                        <div class="news-card">
+                            <div style="display:flex;align-items:center;gap:10px;margin-bottom:0.5rem;">
+                                <span style="background:#9E9E9E;color:white;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:0.9rem;">{i}</span>
+                                <div class="news-title" style="color:#333;font-weight:600;">
+                                    {news['title']}
+                                </div>
+                            </div>
+                            <div class="news-meta" style="margin-left:38px;">
+                                📅 {news['publish_time']} | 📰 {news['source']}
+                            </div>
+                            <div style="margin-left:38px;margin-top:0.5rem;color:#555;font-size:0.9rem;line-height:1.5;">
+                                {news['content'][:150]}...
+                            </div>
                         </div>
-                    </div>
-                    """, unsafe_allow_html=True)
+                        """, unsafe_allow_html=True)
             else:
                 st.error(f"❌ {news_result['error']}")
         else:
@@ -753,7 +1438,7 @@ def main():
 
     # ==================== 标签页 3: 技术回测 ====================
     with tab3:
-        st.header(f"📈 {symbol} 技术回测")
+        st.header(f"📈 {stock_display_name} 技术回测")
 
         # 回测参数
         col1, col2 = st.columns(2)
@@ -761,7 +1446,8 @@ def main():
             selected_strategy = st.selectbox(
                 "选择策略",
                 ["RSI", "MA", "Bollinger"],
-                index=["RSI", "MA", "Bollinger"].index(backtest_strategy)
+                index=["RSI", "MA", "Bollinger"].index(backtest_strategy),
+                help="RSI: 超买超卖指标 | MA: 移动平均线交叉 | Bollinger: 价格波动通道"
             )
         with col2:
             period = st.slider(
@@ -769,6 +1455,7 @@ def main():
                 min_value=30,
                 max_value=365,
                 value=90,
+                help="使用多少天的历史数据进行回测"
             )
 
         if st.button("🔄 运行回测", type="primary", use_container_width=True):
@@ -780,41 +1467,110 @@ def main():
             result = st.session_state.backtest
 
             if result["success"]:
-                # 回测结果卡片
+                # 生成 NLG 洞察分析
+                insights = generate_backtest_insights(result)
+                colors = insights["color_codes"]
+
+                # 整体评级卡片
+                st.markdown(f"""
+                <div style="background:linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                            border-radius:15px;padding:1.5rem;margin-bottom:1.5rem;text-align:center;">
+                    <h2 style="margin:0;color:white;">{insights['overall_summary']}</h2>
+                </div>
+                """, unsafe_allow_html=True)
+
+                # 回测结果卡片（带颜色编码）
                 col1, col2, col3, col4 = st.columns(4)
 
                 with col1:
-                    st.metric(
-                        label="总收益率",
-                        value=f"{result['total_return']:.2f}%",
-                        delta="盈利" if result['total_return'] > 0 else "亏损"
-                    )
+                    delta_label = "📈 盈利" if result['total_return'] > 0 else "📉 亏损"
+                    st.markdown(f"""
+                    <div style="background:white;border-radius:10px;padding:1rem;text-align:center;
+                                border-left:5px solid {colors['return']};box-shadow:0 2px 8px rgba(0,0,0,0.1);">
+                        <div style="font-size:0.85rem;color:#666;margin-bottom:0.5rem;">总收益率</div>
+                        <div style="font-size:1.8rem;font-weight:700;color:{colors['return']};">
+                            {result['total_return']:.2f}%
+                        </div>
+                        <div style="font-size:0.8rem;color:#888;margin-top:0.3rem;">{delta_label}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
 
                 with col2:
-                    st.metric(
-                        label="胜率",
-                        value=f"{result['win_rate']:.1f}%",
-                    )
+                    st.markdown(f"""
+                    <div style="background:white;border-radius:10px;padding:1rem;text-align:center;
+                                border-left:5px solid {colors['winrate']};box-shadow:0 2px 8px rgba(0,0,0,0.1);">
+                        <div style="font-size:0.85rem;color:#666;margin-bottom:0.5rem;">胜率</div>
+                        <div style="font-size:1.8rem;font-weight:700;color:{colors['winrate']};">
+                            {result['win_rate']:.1f}%
+                        </div>
+                        <div style="font-size:0.8rem;color:#888;margin-top:0.3rem;">赚钱概率</div>
+                    </div>
+                    """, unsafe_allow_html=True)
 
                 with col3:
-                    st.metric(
-                        label="夏普比率",
-                        value=f"{result['sharpe_ratio']:.2f}",
-                    )
+                    st.markdown(f"""
+                    <div style="background:white;border-radius:10px;padding:1rem;text-align:center;
+                                border-left:5px solid {colors['sharpe']};box-shadow:0 2px 8px rgba(0,0,0,0.1);">
+                        <div style="font-size:0.85rem;color:#666;margin-bottom:0.5rem;">夏普比率</div>
+                        <div style="font-size:1.8rem;font-weight:700;color:{colors['sharpe']};">
+                            {result['sharpe_ratio']:.2f}
+                        </div>
+                        <div style="font-size:0.8rem;color:#888;margin-top:0.3rem;">性价比评分</div>
+                    </div>
+                    """, unsafe_allow_html=True)
 
                 with col4:
-                    st.metric(
-                        label="最大回撤",
-                        value=f"{result['max_drawdown']:.2f}%",
-                    )
+                    st.markdown(f"""
+                    <div style="background:white;border-radius:10px;padding:1rem;text-align:center;
+                                border-left:5px solid {colors['drawdown']};box-shadow:0 2px 8px rgba(0,0,0,0.1);">
+                        <div style="font-size:0.85rem;color:#666;margin-bottom:0.5rem;">最大回撤</div>
+                        <div style="font-size:1.8rem;font-weight:700;color:{colors['drawdown']};">
+                            {result['max_drawdown']:.2f}%
+                        </div>
+                        <div style="font-size:0.8rem;color:#888;margin-top:0.3rem;">史上最大亏损</div>
+                    </div>
+                    """, unsafe_allow_html=True)
 
-                st.metric(
-                    label="总交易次数",
-                    value=result['total_trades'],
-                )
+                st.markdown(f"""
+                <div style="background:white;border-radius:10px;padding:1rem;text-align:center;
+                            box-shadow:0 2px 8px rgba(0,0,0,0.1);margin-top:0.5rem;">
+                    <div style="font-size:0.85rem;color:#666;">总交易次数</div>
+                    <div style="font-size:1.5rem;font-weight:700;color:#333;">{result['total_trades']}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                # NLG 洞察分析
+                st.subheader("📊 回测深度分析")
+
+                st.markdown(f"""
+                <div style="background:#f8f9fa;border-radius:10px;padding:1.2rem;margin-bottom:1rem;">
+                    {insights['return_analysis']}
+                </div>
+                """, unsafe_allow_html=True)
+
+                st.markdown(f"""
+                <div style="background:#f8f9fa;border-radius:10px;padding:1.2rem;margin-bottom:1rem;">
+                    {insights['risk_analysis']}
+                </div>
+                """, unsafe_allow_html=True)
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown(f"""
+                    <div style="background:#f8f9fa;border-radius:10px;padding:1.2rem;">
+                        {insights['sharpe_analysis']}
+                    </div>
+                    """, unsafe_allow_html=True)
+                with col2:
+                    st.markdown(f"""
+                    <div style="background:#f8f9fa;border-radius:10px;padding:1.2rem;">
+                        {insights['winrate_analysis']}
+                    </div>
+                    """, unsafe_allow_html=True)
 
                 # 回测图表
-                fig = create_backtest_chart(symbol, selected_strategy)
+                st.subheader("📈 收益曲线图")
+                fig = create_backtest_chart(result)
                 st.plotly_chart(fig, use_container_width=True)
 
             else:

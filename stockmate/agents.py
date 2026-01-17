@@ -282,17 +282,22 @@ class TechnicalAgent:
     """技术分析 Agent - 负责技术指标和回测"""
 
     @staticmethod
-    def analyze(symbol: str, market_data: dict) -> dict:
+    def analyze(symbol: str, market_data: dict, fast_mode: bool = True) -> dict:
         """
         进行技术分析
+
+        Args:
+            symbol: 股票代码
+            market_data: 市场数据字典
+            fast_mode: 快速模式（默认 True）
 
         Returns:
             技术分析结果
         """
         from stockmate.tools.stock_tools import run_backtest
 
-        # 运行回测
-        backtest_result = run_backtest(symbol, "RSI")
+        # 运行回测（使用快速模式，默认90天数据）
+        backtest_result = run_backtest(symbol, "RSI", fast_mode=fast_mode)
 
         # 简单的技术判断
         signal = "Hold"
@@ -425,7 +430,9 @@ class DecisionAgent:
 
             # 3. 凯利公式负期望值否决（新增！）
             if not kelly_data["is_positive_ev"]:
-                # 负期望值，强制否决交易
+                # 负期望值，但仍然返回 kelly_result（kelly_fraction 为 0）
+                kelly_result = KellyCriterionResult(**kelly_data)
+
                 return StockAnalysisReport(
                     ticker=symbol,
                     sentiment_score=sentiment_score,
@@ -436,6 +443,7 @@ class DecisionAgent:
                     reasoning=f"⚠️ 凯利公式否决：负期望值交易。回测胜率 {win_prob:.1f}%，盈亏比 {win_loss_ratio:.2f}，期望值 {kelly_data['expected_value']:.4f}。不建议在负期望值下交易，请等待更好的入场机会。",
                     backtest_win_rate=backtest_result.get("win_rate"),
                     backtest_return=backtest_result.get("total_return"),
+                    kelly_result=kelly_result,  # 添加 kelly_result
                 )
 
             # 正期望值，保存凯利结果用于后续展示
