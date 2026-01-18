@@ -10,7 +10,9 @@ import vectorbt as vbt
 from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime, timedelta
 import warnings
+import logging
 
+logger = logging.getLogger(__name__)
 warnings.filterwarnings("ignore")
 
 # ==================== Stock Name Mapping Cache ====================

@@ -11,6 +11,11 @@ from stockmate.tools.stock_tools import (
     get_a_share_data,
     get_latest_news,
     run_backtest,
+    get_stock_name_with_code,
+    generate_backtest_insights,
+    explain_term,
+    generate_human_insight,
+    preload_stock_cache,
 )
 
 __all__ = [
@@ -21,4 +26,9 @@ __all__ = [
     "get_a_share_data",
     "get_latest_news",
     "run_backtest",
+    "get_stock_name_with_code",
+    "generate_backtest_insights",
+    "explain_term",
+    "generate_human_insight",
+    "preload_stock_cache",
 ]

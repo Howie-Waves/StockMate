@@ -276,4 +276,4 @@ MIT License
 
 ---
 
-**StockMate Team** © 2024
+**StockMate Team** © 2026

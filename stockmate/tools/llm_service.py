@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # 创建 OpenAI 客户端（使用 DeepSeek API）
-client = Optional[None]
+_client = None
 
 # 缓存生成的解释（避免重复调用）
 _EXPLANATION_CACHE: Dict[str, str] = {}
@@ -20,15 +20,21 @@ _EXPLANATION_CACHE: Dict[str, str] = {}
 
 def get_llm_client():
     """获取 LLM 客户端"""
-    global client
-    if client is None:
+    global _client
+    if _client is None:
         api_key = os.getenv("OPENAI_API_KEY")
         base_url = os.getenv("OPENAI_BASE_URL", "https://api.deepseek.com")
         if api_key:
-            client = OpenAI(api_key=api_key, base_url=base_url)
+            try:
+                _client = OpenAI(api_key=api_key, base_url=base_url)
+                return _client
+            except Exception as e:
+                print(f"创建 LLM 客户端失败: {e}")
+                return None
         else:
-            client = False  # 标记为不可用
-    return client if client is not False else None
+            print("未配置 OPENAI_API_KEY 环境变量")
+            return None
+    return _client
 
 
 def generate_llm_explanation(
